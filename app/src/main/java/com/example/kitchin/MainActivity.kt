@@ -17,6 +17,27 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Firebase veritabanını çağır
+        val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+
+// Modelden test verileri oluştur
+        val testEv = Household(evId = "ev123", aileAdi = "Çiftçi Ailesi", uyeler = listOf("Ahmet", "Enes"))
+        val testUrun = InventoryItem(urunId = "urun1", urunAdi = "Süt", miktar = 2.0, birim = "litre")
+
+// Veriyi Firestore'a gönder
+        db.collection("Households").document(testEv.evId).set(testEv)
+            .addOnSuccessListener {
+                android.util.Log.d("FirebaseTest", "Ev başarıyla eklendi!")
+
+                // Evin içine Inventory (Envanter) koleksiyonu açıp ürünü ekleyelim
+                db.collection("Households").document(testEv.evId)
+                    .collection("Inventory").document(testUrun.urunId).set(testUrun)
+                    .addOnSuccessListener {
+                        android.util.Log.d("FirebaseTest", "Ürün başarıyla eklendi!")
+                    }
+            }
+
         setContent {
             KitchInTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
