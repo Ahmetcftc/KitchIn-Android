@@ -17,6 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.tooling.preview.Preview
+import java.util.Locale
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -131,11 +133,8 @@ fun ReceiptScannerScreen() {
                 // ONAYLA BUTONU
                 Button(
                     onClick = {
-                        // 1. Metni ProductItem listesine çevir
                         val newItems = convertTextToProductList(scannedText)
-                        // 2. Stok listesine ekle
                         confirmedProducts.addAll(newItems)
-                        // 3. Ekranı temizle ve düzenleme modundan çık
                         scannedText = ""
                         isEditing = false
                     },
@@ -144,17 +143,17 @@ fun ReceiptScannerScreen() {
                     ),
                     modifier = Modifier.weight(1f).padding(start = 8.dp)
                 ) {
-                    Text("Onayla & Stoğa Ekle")
+                    Text("Onayla & Listeye Ekle")
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // EKLENEN STOK LİSTESİ GÖRÜNÜMÜ
+        // EKLENEN STOK LİSTESİ GÖRÜNÜMÜ (SİLME VE ADET DÜZENLEME DAHİL)
         if (confirmedProducts.isNotEmpty()) {
             Text(
-                text = "Mutfak Stoğundaki Ürünler (${confirmedProducts.size} Adet):",
+                text = "Mutfak Stoğundaki Ürünler (${confirmedProducts.size} Çeşit):",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.align(Alignment.Start)
             )
@@ -174,56 +173,144 @@ fun ReceiptScannerScreen() {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(12.dp),
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // Ürün Adı
                             Text(
                                 text = "${index + 1}. ${product.name}",
-                                style = MaterialTheme.typography.bodyLarge
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f)
                             )
-                            Text(
-                                text = product.quantity,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+
+                            // Adet Artırma / Azaltma ve Silme Butonları
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                // Adet Azalt (-)
+                                IconButton(
+                                    onClick = {
+                                        val currentCount = extractCount(product.quantity)
+                                        if (currentCount > 1) {
+                                            confirmedProducts[index] = product.copy(
+                                                quantity = "${currentCount - 1} ADET"
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Text("-", style = MaterialTheme.typography.titleLarge)
+                                }
+
+                                Text(
+                                    text = product.quantity,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+
+                                // Adet Artır (+)
+                                IconButton(
+                                    onClick = {
+                                        val currentCount = extractCount(product.quantity)
+                                        confirmedProducts[index] = product.copy(
+                                            quantity = "${currentCount + 1} ADET"
+                                        )
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Text("+", style = MaterialTheme.typography.titleMedium)
+                                }
+
+                                // Tekli Ürün Silme Buton (Kırmızı Metin Buton)
+                                TextButton(
+                                    onClick = { confirmedProducts.removeAt(index) },
+                                    colors = ButtonDefaults.textButtonColors(
+                                        contentColor = MaterialTheme.colorScheme.error
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 4.dp)
+                                ) {
+                                    Text("Sil", style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
                         }
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // VERİTABANINA / ANA STOĞA KAYDET BUTONU
+            Button(
+                onClick = {
+                    val inventoryList = convertToInventoryItems(confirmedProducts)
+
+                    Toast.makeText(
+                        context,
+                        "${inventoryList.size} çeşit ürün mutfak stoğuna eklendi!",
+                        Toast.LENGTH_LONG
+                    ).show()
+
+                    confirmedProducts.clear()
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.tertiary
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Ürünleri Mutfak Stoğuna Kaydet")
+            }
         }
     }
 }
+
+fun extractCount(quantityStr: String): Int {
+    return quantityStr.split(" ").getOrNull(0)?.toIntOrNull() ?: 1
+}
+
 data class ProductItem(
     val name: String,
     val quantity: String,
     val isAdded: Boolean = true
 )
-// ADIM 2: METNİ ÜRÜN OBJELERİNE DÖNÜŞTÜREN YARDIMCI FONKSİYON (TAM BURAYA)
+
+fun convertToInventoryItems(productItems: List<ProductItem>): List<InventoryItem> {
+    return productItems.map { product ->
+        val parts = product.quantity.split(" ")
+        val amount = parts.getOrNull(0)?.toDoubleOrNull() ?: 1.0
+        val unit = parts.getOrNull(1) ?: "ADET"
+
+        InventoryItem(
+            urunId = UUID.randomUUID().toString(),
+            urunAdi = product.name,
+            miktar = amount,
+            birim = unit,
+            sonTuketimTarihi = null
+        )
+    }
+}
+
 fun convertTextToProductList(scannedText: String): List<ProductItem> {
     val lines = scannedText.split("\n")
     val productList = mutableListOf<ProductItem>()
-    val quantityRegex = Regex("""(?i)\b(\d+([.,]\d+)?\s*(ML|L|G|KG|GR|ADET|AD|PAKET|PK))\b""")
 
     for (line in lines) {
         val trimmedLine = line.trim()
         if (trimmedLine.isBlank()) continue
 
-        val match = quantityRegex.find(trimmedLine)
-        if (match != null) {
-            val quantity = match.value.trim()
-            val name = trimmedLine.substring(0, match.range.start).trim()
+        val parts = trimmedLine.split("|")
+        val name = parts.getOrNull(0)?.trim() ?: trimmedLine
+        val quantity = parts.getOrNull(1)?.trim() ?: "1 ADET"
 
-            productList.add(
-                ProductItem(
-                    name = if (name.isNotBlank()) name else trimmedLine,
-                    quantity = quantity
-                )
+        productList.add(
+            ProductItem(
+                name = name,
+                quantity = quantity
             )
-        } else {
-            productList.add(ProductItem(name = trimmedLine, quantity = "1 ADET"))
-        }
+        )
     }
+
     return productList
 }
 
@@ -231,95 +318,93 @@ fun parseReceiptText(rawText: String): String {
     val lines = rawText.split("\n")
     val parsedItems = mutableListOf<String>()
 
-    // Çöpe atılacak gereksiz fiş, başlık, fatura künyesi, vergi dairesi ve dipnot terimleri
     val ignoredKeywords = listOf(
-        "KDV", "TOPLAM", "TOPKDV", "TOPLAM", "TCKN", "TARİH", "TRH", "SAAT", "FİŞ", "FIS", "NO", "KASA",
+        "KDV", "TOPLAM", "TOPKDV", "TCKN", "TARİH", "TRH", "SAAT", "FİŞ", "FIS", "NO", "KASA",
         "BİM", "BIM", "A101", "MİGROS", "ŞOK", "SOK", "WELCOME", "TEŞEKKÜR", "MERKEZ", "VERGİ",
         "MATRAH", "NRO", "PARA", "NAKİT", "KREDİ", "KART", "ÜSTÜ", "DEĞİŞİM",
-        "BİLGİ", "MALİ", "HAFIZA", "POS", "BANKA", "TOPKDV", "ARATOPLAM",
+        "BİLGİ", "MALİ", "HAFIZA", "POS", "BANKA", "ARATOPLAM",
         "ŞUBE", "SUBE", "CAD", "CADDESİ", "SOK", "SOKAĞI", "MAH", "MAHALLESİ", "TEL", "MERSİS", "HOŞGELDİNİZ",
         "FATURA", "ETNN", "ETKN", "SERIAL", "SERİ", "SIRA", "E-FATURA", "E-ARŞİV", "EARŞİV", "BARKOD", "PLU",
         "VD", "V.D", "VDM", "V.D.M", "MÜKELLEF", "MUKELLEF", "BÜYÜK MÜKELLEFLER", "BUYUK MUKELLEFLER",
-        "POŞET", "POSET", "AMBALAJ", "PLASTİK POŞET", "ALŞ.POŞETİ", "TASIMA POSETI"
+        "POŞET", "POSET", "AMBALAJ", "PLASTİK POŞET", "ALŞ.POŞETİ", "TASIMA POSETI",
+        "TALAS", "KAYSERİ", "KAYSERI", "SİVAS", "SIVAS", "İLÇESİ", "İLCESİ",
+        "HARMAN", "MH", "MH.", "MEZARLIK", "SK", "SK.", "NO:", "NO"
     )
 
-    // Fişin sonuna gelindiğini gösteren durdurma kelimeleri
-    val stopKeywords = listOf("PARA ÜSTÜ", "TOPKDV", "TOPLAM", "TOPKDY", "TOPLAN", "ARATOP", "NAKİT", "KREDİ KART", "TOPLAM", "MALİ HAFIZA", "TOPKDV", "ARATOPLAM")
-
-    // Miktar/Birim ifadelerini yakalayan desen (200ML, 1.5L, 2ADET, 500G, 3KG, 2AD vb.)
+    val stopKeywords = listOf("PARA ÜSTÜ", "TOPKDV", "TOPLAM", "TOPKDY", "TOPLAN", "ARATOP", "NAKİT", "KREDİ KART", "MALİ HAFIZA", "ARATOPLAM")
     val quantityRegex = Regex("""(?i)\b(\d+([.,]\d+)?\s*(ML|L|G|KG|GR|ADET|AD|PAKET|PK))\b""")
-
-    // Satır sonunda fiyat rakamı olup olmadığını kontrol eden desen (Örn: 25.00, 10,50, *15.00)
     val hasPriceRegex = Regex("""\d+([.,]\d+)?\s*(TL|₺)?$""")
 
     var hasStartedProducts = false
 
     for (line in lines) {
-        val upperLine = line.uppercase().trim()
+        val upperLine = line.uppercase(Locale("tr", "TR")).trim()
 
-        // 1. Alt Kısım Kesme: Fişin sonundaki para üstü/toplam kısmında taramayı DURDUR
-        if (stopKeywords.any { upperLine.contains(it) }) {
-            break
-        }
+        if (stopKeywords.any { upperLine.contains(it) }) break
+        if (upperLine.length < 3 || ignoredKeywords.any { upperLine.contains(it) }) continue
 
-        // Fatura no, tarih, saat, ETNN gibi üst künye terimlerini içeren satırları direkt ATLA
-        if (upperLine.length < 3 || ignoredKeywords.any { upperLine.contains(it) }) {
-            continue
-        }
-
-        // BARKOD & ETNN FİLTRESİ:
-        // - 6 haneden uzun tam sayılar (Barkod / Mersis No / Fiş No)
-        // - Tireli/karmaşık uzun ETNN kodları (örn: 1a2b3c-4d5e...)
         val isBarcodeOrEtnn = upperLine.matches(Regex("""^\d{6,}$""")) ||
                 upperLine.matches(Regex("""^[A-Z0-9-]{12,}$""")) ||
-                upperLine.contains("ETNN") || upperLine.contains("ETKN")
+                upperLine.contains("ETNN") || upperLine.contains("ETKN") ||
+                upperLine.contains("SK") || upperLine.contains("NO:")
 
-        if (isBarcodeOrEtnn) {
-            continue
-        }
+        if (isBarcodeOrEtnn) continue
 
         val quantityMatch = quantityRegex.find(line)
         val hasPrice = hasPriceRegex.containsMatchIn(line)
 
-        // 2. Kesin Ürün Başlangıcı Tespiti:
         if (!hasStartedProducts) {
             if (quantityMatch != null || hasPrice) {
                 hasStartedProducts = true
             } else {
-                continue // Fatura detayları ve üst başlıklar bitene kadar atla
+                continue
             }
         }
 
         val finalItem = if (quantityMatch != null) {
-            // Miktarın bittiği yere kadar al (Ürün Adı + Miktar)
-            val cutIndex = quantityMatch.range.last + 1
+            val cutIndex = quantityMatch.range.first
             line.substring(0, cutIndex).trim()
         } else {
-            // Miktar yoksa KDV (%20) ve satır sonu fiyatlarını sil
             line.replace(Regex("""%\s*\d+"""), "")
                 .replace(Regex("""\s+\d+([.,]\d+)?\s*(TL|₺)?$"""), "")
                 .replace(Regex("""[*#-].*"""), "")
                 .trim()
         }
 
-        // Temizlik: Başta/sonda kalan sembolleri temizle
         val cleanName = finalItem
             .replace(Regex("""[*#%-]"""), "")
             .trim()
+            .uppercase(Locale("tr", "TR"))
 
-        // Son Kontrol: Tarih/saat veya barkod kalıntısı barındırmayan geçerli ürün adı mı?
         val containsDateOrTime = cleanName.contains(Regex("""\d{2}[./:]\d{2}"""))
         val isOnlyDigits = cleanName.all { it.isDigit() || it.isWhitespace() }
+        val isOnlyVolumeOrWeight = cleanName.matches(Regex("""(?i)^\d+([.,]\d+)?\s*(ML|L|G|KG|GR|ADET|AD|PAKET|PK)$"""))
+        val isMultiplierPattern = cleanName.matches(Regex("""(?i)^\d+\s*[X*x]$"""))
 
-        if (cleanName.length >= 3 && !containsDateOrTime && !isOnlyDigits && !ignoredKeywords.any { cleanName.uppercase().contains(it) }) {
+        if (cleanName.length >= 3
+            && !containsDateOrTime
+            && !isOnlyDigits
+            && !isOnlyVolumeOrWeight
+            && !isMultiplierPattern
+            && !ignoredKeywords.any { cleanName.contains(it) }
+        ) {
             parsedItems.add(cleanName)
         }
     }
 
-    return if (parsedItems.isNotEmpty()) {
-        parsedItems.joinToString("\n")
+    if (parsedItems.isNotEmpty()) {
+        val groupedMap = LinkedHashMap<String, Int>()
+        for (item in parsedItems) {
+            groupedMap[item] = groupedMap.getOrDefault(item, 0) + 1
+        }
+
+        val formattedList = groupedMap.map { (item, count) ->
+            "$item|$count ADET"
+        }
+
+        return formattedList.joinToString("\n")
     } else {
-        "Net ürün tespit edilemedi, lütfen manuel giriniz."
+        return "Net ürün tespit edilemedi, lütfen manuel giriniz."
     }
 }
 
