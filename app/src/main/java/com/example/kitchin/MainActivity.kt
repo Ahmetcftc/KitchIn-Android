@@ -1,7 +1,12 @@
 package com.example.kitchin
 
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -17,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.core.content.ContextCompat
 import java.util.Locale
 import java.util.UUID
 
@@ -43,11 +49,16 @@ fun ReceiptScannerScreen() {
     var scannedText by remember { mutableStateOf("") }
     var isEditing by remember { mutableStateOf(false) }
 
-    // Onaylanan stok ürünlerinin tutulacağı geçici liste
-    val confirmedProducts = remember { mutableStateListOf<ProductItem>() }
+    // Manuel Ürün Ekleme Pop-up Dialog Durumları
+    var showManualDialog by remember { mutableStateOf(false) }
+    var manualProductName by remember { mutableStateOf("") }
+    var manualAmount by remember { mutableStateOf("1") }
+    var manualUnit by remember { mutableStateOf("ADET") }
 
+    val confirmedProducts = remember { mutableStateListOf<ProductItem>() }
     val receiptScanner = remember { ReceiptScanner(context) }
 
+    // Galeriden Görsel Seçici
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -62,6 +73,38 @@ fun ReceiptScannerScreen() {
                     scannedText = "Hata oluştu: ${e.localizedMessage}"
                 }
             )
+        }
+    }
+
+    // Sesle Tanıma Result Launcher
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val data = result.data
+            val results = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val spokenText = results?.getOrNull(0)
+
+            if (!spokenText.isNullOrBlank()) {
+                val formattedSpeech = formatSpeechToText(spokenText)
+                scannedText = if (scannedText.isEmpty()) {
+                    formattedSpeech
+                } else {
+                    "$scannedText\n$formattedSpeech"
+                }
+                isEditing = true
+            }
+        }
+    }
+
+    // Mikrofon İzni Launcher
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            startSpeechToTextIntent(speechLauncher)
+        } else {
+            Toast.makeText(context, "Mikrofon izni gerekli!", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -82,19 +125,51 @@ fun ReceiptScannerScreen() {
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // FİŞ TARAMA BUTONU
         Button(
             onClick = { imagePickerLauncher.launch("image/*") },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Galeriden Fiş Fotoğrafı Seç & Tara")
+            Text("📷 Galeriden Fiş Fotoğrafı Seç & Tara")
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // SESLE ÜRÜN EKLEME BUTONU
+        OutlinedButton(
+            onClick = {
+                val hasPermission = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+
+                if (hasPermission) {
+                    startSpeechToTextIntent(speechLauncher)
+                } else {
+                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("🎙️ Sesle Ürün Söyle & Ekle")
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // ELLE ÜRÜN EKLEME BUTONU
+        OutlinedButton(
+            onClick = { showManualDialog = true },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("✏️ Elle Ürün Ekle")
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // FİŞ OKUNDUĞUNDA DÜZENLEME EKRANI
+        // FİŞ / SES / MANUEL GİRİŞ DÜZENLEME EKRANI
         if (scannedText.isNotEmpty()) {
             Text(
-                text = "Fişten Algılanan Ürünler (Düzenlenebilir):",
+                text = "Algılanan / Eklenen Ürünler (Düzenlenebilir):",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.align(Alignment.Start)
             )
@@ -150,7 +225,7 @@ fun ReceiptScannerScreen() {
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // EKLENEN STOK LİSTESİ GÖRÜNÜMÜ (SİLME VE ADET DÜZENLEME DAHİL)
+        // EKLENEN STOK LİSTESİ GÖRÜNÜMÜ
         if (confirmedProducts.isNotEmpty()) {
             Text(
                 text = "Mutfak Stoğundaki Ürünler (${confirmedProducts.size} Çeşit):",
@@ -177,27 +252,21 @@ fun ReceiptScannerScreen() {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Ürün Adı
                             Text(
                                 text = "${index + 1}. ${product.name}",
                                 style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.weight(1f)
                             )
 
-                            // Adet Artırma / Azaltma ve Silme Butonları
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                // Adet Azalt (-)
+                                // AZALTMA BUTONU (-)
                                 IconButton(
                                     onClick = {
-                                        val currentCount = extractCount(product.quantity)
-                                        if (currentCount > 1) {
-                                            confirmedProducts[index] = product.copy(
-                                                quantity = "${currentCount - 1} ADET"
-                                            )
-                                        }
+                                        val updatedQuantity = updateQuantity(product.quantity, isIncrease = false)
+                                        confirmedProducts[index] = product.copy(quantity = updatedQuantity)
                                     },
                                     modifier = Modifier.size(32.dp)
                                 ) {
@@ -210,20 +279,17 @@ fun ReceiptScannerScreen() {
                                     color = MaterialTheme.colorScheme.primary
                                 )
 
-                                // Adet Artır (+)
+                                // ARTIRMA BUTONU (+)
                                 IconButton(
                                     onClick = {
-                                        val currentCount = extractCount(product.quantity)
-                                        confirmedProducts[index] = product.copy(
-                                            quantity = "${currentCount + 1} ADET"
-                                        )
+                                        val updatedQuantity = updateQuantity(product.quantity, isIncrease = true)
+                                        confirmedProducts[index] = product.copy(quantity = updatedQuantity)
                                     },
                                     modifier = Modifier.size(32.dp)
                                 ) {
                                     Text("+", style = MaterialTheme.typography.titleMedium)
                                 }
 
-                                // Tekli Ürün Silme Buton (Kırmızı Metin Buton)
                                 TextButton(
                                     onClick = { confirmedProducts.removeAt(index) },
                                     colors = ButtonDefaults.textButtonColors(
@@ -241,11 +307,9 @@ fun ReceiptScannerScreen() {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // VERİTABANINA / ANA STOĞA KAYDET BUTONU
             Button(
                 onClick = {
                     val inventoryList = convertToInventoryItems(confirmedProducts)
-
                     Toast.makeText(
                         context,
                         "${inventoryList.size} çeşit ürün mutfak stoğuna eklendi!",
@@ -263,10 +327,148 @@ fun ReceiptScannerScreen() {
             }
         }
     }
+
+    // MANUEL ÜRÜN EKLEME POP-UP (ALERTDIALOG)
+    if (showManualDialog) {
+        AlertDialog(
+            onDismissRequest = { showManualDialog = false },
+            title = { Text("Elle Ürün Ekle") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = manualProductName,
+                        onValueChange = { manualProductName = it },
+                        label = { Text("Ürün Adı (Örn: Peynir)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = manualAmount,
+                            onValueChange = { manualAmount = it },
+                            label = { Text("Miktar") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        OutlinedTextField(
+                            value = manualUnit,
+                            onValueChange = { manualUnit = it },
+                            label = { Text("Birim (ADET/KG/L)") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (manualProductName.isNotBlank()) {
+                            val formattedItem = "${manualProductName.uppercase(Locale("tr", "TR")).trim()}|${manualAmount.trim()} ${manualUnit.uppercase(Locale("tr", "TR")).trim()}"
+
+                            scannedText = if (scannedText.isEmpty()) {
+                                formattedItem
+                            } else {
+                                "$scannedText\n$formattedItem"
+                            }
+                            isEditing = true
+
+                            manualProductName = ""
+                            manualAmount = "1"
+                            manualUnit = "ADET"
+                            showManualDialog = false
+                        }
+                    }
+                ) {
+                    Text("Listeye Aktar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showManualDialog = false }) {
+                    Text("İptal")
+                }
+            }
+        )
+    }
 }
 
-fun extractCount(quantityStr: String): Int {
-    return quantityStr.split(" ").getOrNull(0)?.toIntOrNull() ?: 1
+// BİRİM VE MİKTAR DUYARLI ARTIRMA/AZALTMA FONKSİYONU
+fun updateQuantity(quantityStr: String, isIncrease: Boolean): String {
+    val parts = quantityStr.trim().split(" ")
+    val rawAmount = parts.getOrNull(0)?.replace(",", ".")?.toDoubleOrNull() ?: 1.0
+    val unit = parts.drop(1).joinToString(" ").ifEmpty { "ADET" }
+
+    val decimalUnits = listOf("KG", "KİLO", "L", "LİTRE", "LT", "GR", "GRAM")
+    val isDecimalUnit = decimalUnits.any { unit.uppercase(Locale("tr", "TR")).contains(it) }
+
+    val step = if (isDecimalUnit) 0.1 else 1.0
+
+    var newAmount = if (isIncrease) rawAmount + step else rawAmount - step
+    if (newAmount < 0.1) newAmount = 0.1 // 0'ın altına düşmesin
+
+    return if (isDecimalUnit) {
+        String.format(Locale.US, "%.1f %s", newAmount, unit)
+    } else {
+        "${newAmount.toInt()} $unit"
+    }
+}
+
+private fun startSpeechToTextIntent(
+    launcher: androidx.activity.result.ActivityResultLauncher<Intent>
+) {
+    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "tr-TR")
+        putExtra(RecognizerIntent.EXTRA_PROMPT, "Eklenecek ürünleri söyleyin (Örn: Süt 2 litre, Yumurta 10 adet)")
+    }
+    launcher.launch(intent)
+}
+
+fun formatSpeechToText(spokenText: String): String {
+    val upper = spokenText.uppercase(Locale("tr", "TR")).trim()
+    val regex = Regex("""(\d+(?:[.,]\d+)?)\s*(KİLO|KG|GRAM|GR|ADET|AD|PAKET|PK|LİTRE|LT|L)""")
+    val matches = regex.findAll(upper).toList()
+    val resultLines = mutableListOf<String>()
+
+    if (matches.isNotEmpty()) {
+        for (i in matches.indices) {
+            val match = matches[i]
+            val amount = match.groupValues[1]
+            var unit = match.groupValues[2]
+
+            unit = when (unit) {
+                "KİLO" -> "KG"
+                "GRAM" -> "GR"
+                "LİTRE", "LT" -> "L"
+                "AD" -> "ADET"
+                "PK" -> "PAKET"
+                else -> unit
+            }
+
+            val startIndex = match.range.last + 1
+            val endIndex = if (i + 1 < matches.size) matches[i + 1].range.first else upper.length
+            var productName = upper.substring(startIndex, endIndex).trim()
+            productName = productName.replace(Regex("""\b(VE|VE YA|İLE|SONRA)\b"""), "").trim()
+
+            if (productName.isNotBlank()) {
+                resultLines.add("$productName|$amount $unit")
+            }
+        }
+    }
+
+    if (resultLines.isEmpty()) {
+        val cleanItems = upper.split(Regex("""\b(VE|VE YA|İLE|SONRA)\b"""))
+        for (item in cleanItems) {
+            val trimmed = item.trim()
+            if (trimmed.isNotBlank()) {
+                resultLines.add("$trimmed|1 ADET")
+            }
+        }
+    }
+
+    return resultLines.joinToString("\n")
 }
 
 data class ProductItem(
@@ -279,7 +481,7 @@ fun convertToInventoryItems(productItems: List<ProductItem>): List<InventoryItem
     return productItems.map { product ->
         val parts = product.quantity.split(" ")
         val amount = parts.getOrNull(0)?.toDoubleOrNull() ?: 1.0
-        val unit = parts.getOrNull(1) ?: "ADET"
+        val unit = parts.drop(1).joinToString(" ").ifEmpty { "ADET" }
 
         InventoryItem(
             urunId = UUID.randomUUID().toString(),
